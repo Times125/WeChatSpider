@@ -1,2 +1,2 @@
-# WeChatSpider
-分布式微信爬虫
+# wechatSpider
+基于celery和requests的分布式微信爬虫
