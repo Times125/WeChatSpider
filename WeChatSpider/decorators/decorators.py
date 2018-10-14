@@ -9,6 +9,10 @@
 from functools import wraps
 from WeChatSpider.logger import (download_logger, parse_logger)
 from traceback import format_tb
+from requests.exceptions import (Timeout, ConnectTimeout,
+                                 ReadTimeout, ConnectionError)
+
+__all__ = ['timeout_decorator', 'parse_decorator']
 
 
 def timeout_decorator(func):
@@ -16,7 +20,7 @@ def timeout_decorator(func):
     def time_limit(*args, **kwargs):
         try:
             return func(*args, **kwargs)
-        except Exception as e:
+        except (Timeout, ConnectTimeout, ReadTimeout, ConnectionError) as e:
             download_logger.error("Exception '{}' occurred when crawl url '{}', traceback: {}".format(e, args[0],
                                                                                                       format_tb(
                                                                                                           e.__traceback__)))

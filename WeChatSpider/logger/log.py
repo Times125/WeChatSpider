@@ -9,16 +9,16 @@
 import os
 import logging
 from logging import config as log_conf
-from WeChatSpider.config import LOG_DIR, LOG_NAME
+from ..config import log_dir, log_name
 
 __all__ = ["db_logger", "download_logger", "parse_logger", "other_logger"]
 
 
-abs_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), LOG_DIR)
+abs_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), log_dir)
 if not os.path.exists(abs_path):
     os.mkdir(abs_path)
-log_path = os.path.join(abs_path, LOG_NAME)
-print(abs_path)
+log_path = os.path.join(abs_path, log_name)
+# print(abs_path)
 log_config = {
     'version': 1.0,
     'formatters': {

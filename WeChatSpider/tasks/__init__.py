@@ -7,6 +7,7 @@
 @Description: 
 """
 from .test import execute_add
+from .article import *
 
 tasks_map = {
     'test': execute_add

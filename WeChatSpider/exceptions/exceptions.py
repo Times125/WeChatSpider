@@ -7,7 +7,7 @@
 @Description: 
 """
 __all__ = ["Timeout", "NoCookiesException", "VerificationCodeError",
-           "OverrideAttrException", "NoTaskException"]
+           "OverrideAttrException", "NoTaskException", "SpiderBanError"]
 
 
 class Timeout(Exception):
@@ -37,4 +37,10 @@ class OverrideAttrException(Exception):
 class NoTaskException(Exception):
     """
     No task to access exception
+    """
+
+
+class SpiderBanError(Exception):
+    """
+    spider has been banned
     """
