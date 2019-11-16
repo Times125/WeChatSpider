@@ -17,7 +17,7 @@ from .basic import get_db_session
 from ..logger import db_logger
 from .model import (SearchKeyword, UserMonitorAccount, SpiderStatus)
 
-__all__ = ['CommonOperate', "KeywordsOperate", 'SpiderStatusDao', 'CacheDataDao']
+__all__ = ['CommonOperate', "KeywordsOperate", 'SpiderStatusDao']
 
 
 class CommonOperate:
@@ -100,21 +100,3 @@ class SpiderStatusDao(CommonOperate):
         status.status = stat
         status.real_crawl_interval = update_internal
         SpiderStatusDao.save(status)
-
-
-class CacheDataDao(CommonOperate):
-    @classmethod
-    def save(cls, cache_data):
-        rs = 1
-        with get_db_session() as db_session:
-            try:
-                db_session.add(cache_data)
-                db_session.commit()
-            except SqlalchemyIntegrityError:
-                db_session.rollback()
-                # cls.update(info.post_id, info.keyword, info.last_reply_time)
-                rs = 0
-            except Exception as e:
-                db_logger.error('exception {} is raied'.format(e))
-                rs = 0
-        return rs

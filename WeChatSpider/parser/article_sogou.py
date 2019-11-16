@@ -14,7 +14,7 @@ from bs4 import BeautifulSoup
 from ..decorators import parse_decorator
 
 __all__ = ['parse_search_article_result', 'parse_total_page', 'parse_article_content', 'parse_fulltext_url',
-           'parse_search_gzh_result',
+           'parse_search_gzh_result', 'parse_gzh_info',
            'parse_history_url_list']
 
 sogou_domain = 'http://weixin.sogou.com'
@@ -44,9 +44,10 @@ def parse_article_content(html):
     img_list = list()
     # TODO 抓取文章中的视频信息，如果存在
     soup = BeautifulSoup(html, 'html.parser')
-    content = soup.find('div', attrs={'id': 'js_article'})
+    content = soup.find('div', attrs={'id': 'js_content'})  # js_article
     if content:
         content = content.get_text()  # 文章文字内容
+        content = re.sub(r'\n{2,*}', '\n', content)
         con['content'] = content if content else ''
     else:
         con['content'] = ''
@@ -63,15 +64,6 @@ def parse_article_content(html):
         for png in pngs:
             img_list.append(png.get('data-src'))
     con['image_list'] = ','.join(img_list) if img_list else ''
-
-    page_source = soup.find('div', attrs={'id': 'js_article'})
-
-    if page_source:
-        page_source = str(page_source).replace('data-src', 'src')  # 包含标签的文章内容，用于源文章呈现
-        con['page_source'] = page_source if page_source else ''
-    else:
-        con['page_source'] = ''
-
     con['video'] = ','.join(video) if video else ''
 
     return con
@@ -94,14 +86,14 @@ def parse_search_article_result(html):
 
         item['article_url'] = article_url if article_url else ""
 
-        article_title = txt_box.find('a').get_text()  # 文章标题
-        item['article_title'] = article_title if article_title else ''
+        article_title = txt_box.find('a')  # 文章标题
+        item['article_title'] = article_title.get_text() if article_title else ''
 
-        article_abstract = txt_box.find('p', attrs={'class': 'txt-info'}).get_text()  # 文章摘要
-        item['article_abstract'] = article_abstract if article_abstract else ''
+        article_abstract = txt_box.find('p', attrs={'class': 'txt-info'})  # 文章摘要
+        item['article_abstract'] = article_abstract.get_text() if article_abstract else ''
 
-        article_from = txt_box.find('a', attrs={'class': 'account'}).get_text()  # 文章来源（公众号）
-        item['article_from'] = article_from if article_from else ''
+        article_from = txt_box.find('a', attrs={'class': 'account'})  # 文章来源（公众号）
+        item['article_from'] = article_from.get_text() if article_from else ''
 
         a_time = txt_box.find('div', attrs={'class': 's-p'}).get('t')
         item['article_time'] = int(a_time) * 1000  # 发布时间
@@ -126,6 +118,33 @@ def parse_total_page(html):
     return math.ceil(num / 10)
 
 
+@parse_decorator({'gzh_name': '', 'gzh_id': '', 'gzh_intro': '', 'gzh_firm': '', 'gzh_head_image': ''})
+def parse_gzh_info(html):
+    """
+    解析公众号简介页面
+    """
+    item = dict()
+    soup = BeautifulSoup(html, 'html.parser')
+    head_image = soup.find('span', attrs={'class', 'radius_avatar profile_avatar'}).find('img').get('src')
+    item['gzh_head_image'] = head_image if head_image else ''
+
+    gzh_name = soup.find('strong', attrs={'class': 'profile_nickname'})
+    item['gzh_name'] = gzh_name.get_text().replace('\n', '').strip() if gzh_name else ''
+
+    gzh_id = soup.find('p', attrs={'class': 'profile_account'})  # 微信号
+    item['gzh_id'] = gzh_id.get_text().split(':')[-1].strip() if gzh_id else ''
+
+    li_list = soup.find('ul', attrs={'class': 'profile_desc'}).find_all('li')
+
+    gzh_intro = li_list[0].find('div', attrs={'class', 'profile_desc_value'})  # 公众号简介
+    item['gzh_intro'] = gzh_intro.get_text() if gzh_intro else ''
+
+    gzh_firm = li_list[1].find('div', attrs={'class', 'profile_desc_value'})  # 公众号主体
+    item['gzh_firm'] = gzh_firm.get_text() if gzh_firm else ''
+
+    return item
+
+
 @parse_decorator(list())
 def parse_search_gzh_result(html):
     """
@@ -139,69 +158,43 @@ def parse_search_gzh_result(html):
     for li in ul.find_all('li'):
         item = dict()
         txt_box = li.find('div', attrs={'class': 'txt-box'})
-        article_url = txt_box.find('a').get('href')  # 公众号url
-        item['gzh_url'] = article_url
+        gzh_url = txt_box.find('a').get('href')  # 公众号url
+        item['gzh_url'] = gzh_url if gzh_url else ''
 
-        article_title = txt_box.find('a').get_text()  # 公众号标题
-        item['gzh_name'] = article_title
+        gzh_name = txt_box.find('a')  # 公众号名称
+        item['article_from'] = gzh_name.get_text() if gzh_name else ''
 
+        gzh_id = txt_box.find('label', attrs={'name': 'em_weixinhao'})  # 微信号
+        item['gzh_id'] = gzh_id.get_text().split(':')[-1].strip() if gzh_id else ''
+
+        dl_list = li.find_all('dl')
+        if len(dl_list) == 3:
+            gzh_latest_article = dl_list[2].find('dd').find('a').get('href')  # 最近文章url
+            item['article_url'] = gzh_latest_article
+
+            gzh_latest_article = dl_list[2].find('dd').find('a')  # 最近文章title
+            item['article_abstract'] = item[
+                'article_title'] = gzh_latest_article.get_text() if gzh_latest_article else ''
+
+            publish_time = dl_list[2].find('dd').find('span').find('script').get_text()  # 最近的文章发布时间
+            publish_time = re.compile(r'[\d]+').findall(publish_time)[0]
+            item['article_time'] = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(int(publish_time)))
+
+        elif len(dl_list) == 2:
+            gzh_latest_article = dl_list[1].find('dd').find('a').get('href')  # 最近文章url
+            item['article_url'] = gzh_latest_article
+
+            gzh_latest_article = dl_list[1].find('dd').find('a')  # 最近文章title
+            item['article_abstract'] = item[
+                'article_title'] = gzh_latest_article.get_text() if gzh_latest_article else ''
+
+            publish_time = dl_list[1].find('dd').find('span').find('script').get_text()  # 最近的文章发布时间
+            publish_time = re.compile(r'[\d]+').findall(publish_time)[0]
+            item['article_time'] = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(int(publish_time)))
+
+        elif len(dl_list) == 1:
+            item['article_url'] = ""
+            item['article_abstract'] = item['article_title'] = ''
+            item['article_time'] = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())
         res.append(item)
-    return res
-
-
-@parse_decorator(list())
-def parse_history_url_list(html):
-    """
-    获取公众号页面10条历史消息的url
-    :param html:
-    :return:
-    """
-    soup = BeautifulSoup(html, 'html.parser')
-    base_url = 'https://mp.weixin.qq.com'
-    pattern = re.compile(r"var\s*msgList\s*=\s*(.*?);\s*seajs\.use", re.MULTILINE | re.DOTALL)
-    real_content = re.search(pattern, html)
-    history_json = json.loads(real_content.group(1))
-    res = list()
-    for info in history_json['list']:
-        try:
-            item = dict()
-            item['article_from'] = soup.title.string
-
-            time_stamp = info['comm_msg_info']['datetime']
-            item['article_time'] = time_stamp * 1000
-
-            title = info['app_msg_ext_info']['title']
-            item['article_title'] = title
-
-            abstract = info['app_msg_ext_info']['digest']
-            item['article_abstract'] = abstract
-
-            if 'multi_app_msg_item_list' in info['app_msg_ext_info']:
-                for sub_info in info['app_msg_ext_info']['multi_app_msg_item_list']:
-                    sub_item = dict()
-                    sub_item['article_from'] = soup.title.string
-                    sub_item['article_time'] = time_stamp * 1000
-                    sub_item['article_title'] = sub_info['title']
-                    sub_item['article_abstract'] = sub_info['digest']
-                    content_url = sub_info['content_url']
-                    if content_url:
-                        if "mp.weixin.qq.com" in content_url:
-                            sub_item['article_url'] = content_url.replace('&amp;', "&")
-                        else:
-                            sub_item['article_url'] = base_url + content_url.replace('&amp;', "&")
-                    else:
-                        continue
-                    res.append(sub_item)
-
-            content_url = info['app_msg_ext_info']['content_url']
-            if content_url:
-                if "mp.weixin.qq.com" in content_url:
-                    item['article_url'] = content_url.replace('&amp;', "&")
-                else:
-                    item['article_url'] = base_url + content_url.replace('&amp;', "&")
-            else:
-                continue
-            res.append(item)
-        except KeyError:
-            continue
     return res

@@ -12,16 +12,15 @@ import re
 import random
 import math
 import hashlib
+from datetime import datetime
 from urllib.parse import quote
 from ..const import SearchType
 from ..logger import download_logger
 from ..bloomfilter import BloomFilterRedis
-from ..utils import md5
-from ..kafka import write2kafka
 from ..parser import (
     is_404, parse_search_article_result,
     parse_article_content, parse_fulltext_url,
-    parse_search_gzh_result, parse_history_url_list
+    parse_search_gzh_result, parse_gzh_info
 )
 from ..exceptions import SpiderBanError
 from ..decorators import (
@@ -35,8 +34,7 @@ from ..cookies import (
     suv_gen, CookiesCache
 )
 from ..db import (
-    WeiChatArticleData, SpiderStatusDao,
-    CacheMidTable, CacheDataDao)
+    WeChatArticleData, SpiderStatusDao, WeChatAccountData)
 from ..config import (
     identify_captcha_retries,
     identify_sleep_time,
@@ -226,7 +224,7 @@ class WechatAPI(object):
                 resp = self._get(url, session, headers=_headers)
                 resp.encoding = 'utf-8'
         if is_404(resp.text):
-            return '404 page'
+            return '404'
         return resp.text
 
     @timeout_decorator
@@ -286,34 +284,37 @@ class WechatAPI(object):
             self._storage(keyword, content_dict)
 
     @staticmethod
-    def _storage(keyword, data):
+    def _storage(keyword, data, types='article'):
         """
         对采集结果进行持久化存储
         :param keyword:
         :param data: data dict
+        :param types:
         :return:
         """
-        wx_article = WeiChatArticleData()
-        wx_article.url = data['article_url']
-        wx_article.title = data['article_title']
-        wx_article.source = data['article_from']
-        wx_article.publish_time = data['article_time']
-        wx_article.abstract = data['article_abstract']
-        wx_article.content = data['content']
-        wx_article.image_urls = data['image_list']
-        wx_article.video = data['video']
-        wx_article.raw_content = data['page_source']
-        wx_article.fetch_time = int(time.time() * 1000)
-        wx_article.search_word = keyword
-        wx_article.md5 = md5(data['article_title'] + str(data['article_time']))
-        write2kafka(wx_article.to_json())  # 往kafka中写，不写mysql了
-        # 更新缓存中间表
-        _cache = CacheMidTable()
-        _cache.url = wx_article.url
-        _cache.md5 = wx_article.md5
-        _cache.proxy = 0
-        CacheDataDao.save(_cache)
-        # pass
+        if types == 'article':
+            wx_article = WeChatArticleData()
+            wx_article.url = data['article_url']
+            wx_article.title = data['article_title']
+            wx_article.source = data['article_from']
+            wx_article.publish_time = data['article_time']
+            wx_article.abstract = data['article_abstract']
+            wx_article.content = data['content']
+            wx_article.image_urls = data['image_list']
+            wx_article.video = data['video']
+            wx_article.fetch_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            wx_article.search_word = keyword
+            SpiderStatusDao.add_one(wx_article)
+        # 公众号账号信息
+        else:
+            gzh = WeChatAccountData()
+            gzh.weixin_id = data['gzh_id']
+            gzh.weixin_name = data['gzh_name']
+            gzh.weixin_intro = data['gzh_intro']
+            gzh.weixin_firm = data['gzh_firm']
+            gzh.head_image = data['gzh_head_image']
+            gzh.fetch_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            SpiderStatusDao.add_one(gzh)
 
     def _format_url(self, url, session, referer, text):
         """
@@ -396,9 +397,7 @@ class WechatAPI(object):
             referer = base_url.format(search_type, quote(keyword), cur_page)
             try:
                 html = self._get_with_unlock(url=url, session=session, referer=referer)
-                # with open('test.html', 'w+', encoding='utf8') as w:
-                #     w.write(html)
-                if html and html is not '404 page':
+                if html and html is not '404':
                     # 搜索文章
                     if SearchType.article == search_type:
                         article_list = parse_search_article_result(html)
@@ -406,30 +405,30 @@ class WechatAPI(object):
                             for item in article_list:
                                 item['article_url'] = self._format_url(item['article_url'], session, referer, html)
                             self._get_article_content(keyword, session, article_list, referer)
-                    # 搜索与给定名称完全匹配的公众号
-                    if SearchType.gzh_account == search_type and gzh_crawl_mode == 'strict':
+                    # 搜索公众号
+                    if SearchType.gzh_account == search_type:
                         gzh_list = parse_search_gzh_result(html)
                         for item in gzh_list:
+                            # 首先先获取公众号主页和文章的链接，链接需要通过程序解密重新组装
                             item['gzh_url'] = self._format_url(item['gzh_url'], session, referer, html)
-                            account_link = item['gzh_url']  # 公众号首页链接
-                            if keyword == item['gzh_name']:  # 若检索到的公众号名称与给定keyword匹配则进行抓取，否则继续检索
-                                html = self._get_with_unlock(
-                                    url=account_link, session=session,
-                                    referer=referer, captcha_recognize_func=self._unlock_wechat)
-                                url_list = parse_history_url_list(html)
-                                self._get_article_content(keyword, session, url_list)
+                            item['article_url'] = self._format_url(item['article_url'], session, referer, html)
+                            # 抓取公众号介绍页面
+                            gzh_page = self._get_with_unlock(item['gzh_url'], session, referer, self._unlock_wechat)
+                            if gzh_page or gzh_page is not '404':
+                                gzh_info = parse_gzh_info(gzh_page)
+                                if gzh_info['gzh_name']:
+                                    # 有时候公众号介绍页面没有微信id，就得用在搜狗检索到的微信id来补全
+                                    if not gzh_info['gzh_id']:
+                                        gzh_info['gzh_id'] = item['gzh_id']
+                                    self._storage(keyword, gzh_info, 'gzh')
+                            # 抓取文章
+                            self._get_article_content(keyword, session, [item])
+                            # 搜索与给定名称完全匹配的公众号
+                            if gzh_crawl_mode == 'strict':
                                 return
-                    # 搜索所有名称模糊匹配的公众号
-                    if SearchType.gzh_account == search_type and gzh_crawl_mode == 'greed':
-                        gzh_list = parse_search_gzh_result(html)
-                        for item in gzh_list:
-                            item['gzh_url'] = self._format_url(item['gzh_url'], session, referer, html)
-                            account_link = item['gzh_url']  # 公众号首页链接
-                            html = self._get_with_unlock(
-                                url=account_link, session=session,
-                                referer=referer, captcha_recognize_func=self._unlock_wechat)
-                            url_list = parse_history_url_list(html)
-                            self._get_article_content(keyword, session, url_list)
+                            # 搜索与给定名称模糊匹配的公众号
+                            elif gzh_crawl_mode == 'greed':
+                                continue
             except SpiderBanError as e:
                 download_logger.error(e)
                 SpiderStatusDao.save_spider_status('因cookie过期，本页数据未能爬取，错误url={}'.format(url), 0)
